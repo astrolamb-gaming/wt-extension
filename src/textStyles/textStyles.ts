@@ -20,10 +20,10 @@ export class TextStyles implements Timed {
         // Will later be modified by TimedView
         this.enabled = true;
         this.registerCommands();
-        this.context.subscriptions.push(italicsDecoration);
-        this.context.subscriptions.push(boldDecoration);
-        this.context.subscriptions.push(underlineDecoration);
-        this.context.subscriptions.push(strikethroughDecoration);
+        // this.context.subscriptions.push(italicsDecoration);
+        // this.context.subscriptions.push(boldDecoration);
+        // this.context.subscriptions.push(underlineDecoration);
+        // this.context.subscriptions.push(strikethroughDecoration);
 	}
 
     getUpdatesAreVisible(): boolean {

@@ -2704,8 +2704,9 @@
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./",
-		"watch": "tsc -watch -p ./",
+		"compile": "tsc -b",
+		"build:refs": "tsc -b",
+		"watch": "tsc -b -w",
 		"lint": "eslint \"src/**/*.ts\""
 	},
 	"devDependencies": {

@@ -52,6 +52,7 @@ import * as console from './miscTools/vsconsole';
 import { SpacingHighlights } from './miscTools/spacingHighlights';
 import { NotebookWebview } from './notebook/notebookWebview';
 import { DefinitionsPanelWebview } from './intellisense/synonymsProvider/definitionPanel';
+import { activateLanguageServerClient } from '../client/out/client';
 
 export const decoder = new TextDecoder();
 export const encoder = new TextEncoder();
@@ -276,6 +277,7 @@ async function handleLoadFailure (err: Error | string | unknown) {
 
 export function activate (context: vscode.ExtensionContext) {
     activateImpl(context);
+    activateLanguageServerClient(context);
     return context;
 }
 
