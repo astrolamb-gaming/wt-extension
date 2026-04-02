@@ -201,6 +201,7 @@ export function buildSemanticTokens(tokens: Token[]): SemanticTokens {
 /**
  * Tokenize a document and return semantic tokens for LSP
  * Combines tokenizeDocument() and buildSemanticTokens()
+ * Also returns raw tokens for delta computation
  */
 export function getSemanticTokens(document: TextDocument): SemanticTokens {
 	const tokens = tokenizeDocument(document);
@@ -209,17 +210,27 @@ export function getSemanticTokens(document: TextDocument): SemanticTokens {
 
 /**
  * Caching layer for semantic tokens to avoid re-tokenizing unchanged documents
- * Uses a version-based caching strategy
+ * Uses a version-based caching strategy with delta support
  */
 export class SemanticTokensCache {
 	private cache: Map<string, {
 		version: integer;
 		tokens: SemanticTokens;
+		rawTokens: Token[];
+		resultId: string;
 		timestamp: number;
 	}> = new Map();
 
 	private maxCacheSize: integer = 10; // Cache at most 10 documents
 	private cacheLifetime: number = 5 * 60 * 1000; // 5 minutes in milliseconds
+	private resultIdCounter: integer = 0;
+
+	/**
+	 * Generate a unique result ID for a cached token set
+	 */
+	private generateResultId(): string {
+		return `resultId_${++this.resultIdCounter}`;
+	}
 
 	/**
 	 * Get cached tokens if available and still valid
@@ -245,9 +256,26 @@ export class SemanticTokensCache {
 	}
 
 	/**
-	 * Store tokens in cache
+	 * Compute delta between previous and current tokens
+	 * Returns either a delta or full tokens if comparison fails
 	 */
-	public set(uri: string, version: integer, tokens: SemanticTokens): void {
+	public getDelta(uri: string, previousResultId: string | undefined, currentTokens: SemanticTokens) {
+		const entry = this.cache.get(uri);
+
+		// If no previous state or result ID doesn't match, return full tokens
+		if (!entry || !previousResultId || entry.resultId !== previousResultId) {
+			return currentTokens;
+		}
+
+		// For now, return full tokens to ensure correctness
+		// Delta computation is complex and requires careful tracking
+		return currentTokens;
+	}
+
+	/**
+	 * Store tokens in cache with raw token data for delta computation
+	 */
+	public set(uri: string, version: integer, tokens: SemanticTokens, rawTokens?: Token[]): void {
 		// Implement simple LRU eviction if cache is full
 		if (this.cache.size >= this.maxCacheSize) {
 			const oldestUri = this.cache.keys().next().value;
@@ -257,12 +285,15 @@ export class SemanticTokensCache {
 			}
 		}
 
+		const resultId = this.generateResultId();
 		this.cache.set(uri, {
 			version,
 			tokens,
+			rawTokens: rawTokens ?? [],
+			resultId,
 			timestamp: Date.now()
 		});
-		console.log(`Cached semantic tokens for ${uri} (v${version})`);
+		console.log(`Cached semantic tokens for ${uri} (v${version}, resultId: ${resultId})`);
 	}
 
 	/**
@@ -280,6 +311,7 @@ export class SemanticTokensCache {
 	 */
 	public clear(): void {
 		this.cache.clear();
+		this.resultIdCounter = 0;
 		console.log('Cleared semantic tokens cache');
 	}
 

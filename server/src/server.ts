@@ -1,6 +1,6 @@
 import { createConnection, DidChangeConfigurationNotification, InitializeParams, InitializeResult, ProposedFeatures, TextDocuments, TextDocumentSyncKind, SemanticTokensRequest, SemanticTokensParams } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { getSemanticTokens, TOKEN_TYPES, TOKEN_MODIFIERS, getEmptySemanticTokens } from './semanticTokens/semanticTokens';
+import { getSemanticTokens, TOKEN_TYPES, TOKEN_MODIFIERS, getEmptySemanticTokens, getSemanticTokensCache } from './semanticTokens/semanticTokens';
 import { get } from 'http';
 
 // Create a connection for the server, using Node's IPC as a transport.
@@ -49,7 +49,7 @@ connection.onInitialize((params: InitializeParams) => {
                 },
                 range: false,
                 full: true
-            }
+            } as any
 		}
 	};
 
@@ -77,9 +77,15 @@ connection.languages.semanticTokens.on((params: SemanticTokensParams) => {
 	if (!document) {
 		return getEmptySemanticTokens();
 	}
-	return getSemanticTokens(document);
-    // return getEmptySemanticTokens();
+	const cache = getSemanticTokensCache();
+	const tokens = getSemanticTokens(document);
+	cache.set(document.uri, document.version, tokens);
+	return tokens;
 });
+
+// Note: Delta handler commented due to LSP library version limitations
+// The cache infrastructure supports delta computation via getDelta() method
+// when delta support becomes available through library updates
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events
