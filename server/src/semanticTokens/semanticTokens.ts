@@ -5,7 +5,8 @@ export const TOKEN_TYPES = [
 	'word',        // 0
 	'whitespace',  // 1
 	'punctuation', // 2
-	'marker'       // 3
+	'marker',      // 3
+	'Comment'      // 4
 ] as const;
 
 export const TOKEN_MODIFIERS = [
@@ -43,6 +44,7 @@ function tokenizeDocument(document: TextDocument): Token[] {
 
 	const activeModifiers = new Set<string>();
 	const orderedModifiers = [...TOKEN_MODIFIERS];
+	let inComment = false;
 
 	const isAlphaNum = (char: string): boolean => /[\p{L}\p{N}]/u.test(char);
 	const isInWordApostrophe = (index: number): boolean => {
@@ -118,6 +120,21 @@ function tokenizeDocument(document: TextDocument): Token[] {
 			continue;
 		}
 
+		if (char === "[") {
+			emitRun(col);
+			inComment = true;
+			startOrExtendRun("Comment", []);
+			col += 1;
+			continue;
+		}
+
+		if (char === "]") {
+			startOrExtendRun("Comment", []);
+			inComment = false;
+			col += 1;
+			continue;
+		}
+
 		if (char in markerToModifier) {
 			const modifier = markerToModifier[char];
 			const isClosingMarker = activeModifiers.has(modifier);
@@ -138,17 +155,21 @@ function tokenizeDocument(document: TextDocument): Token[] {
 			continue;
 		}
 
+		// If we're in a comment, mark all characters as comment type
+		if (inComment) {
+			const modifiers = getActiveModifiers();
+			startOrExtendRun("Comment", modifiers);
+			col += 1;
+			continue;
+		}
+
 		const charType = (isAlphaNum(char) || isInWordApostrophe(i))
 			? "word"
 			: isWhitespace(char)
 				? "whitespace"
 				: "punctuation";
 		const modifiers = getActiveModifiers();
-		if (modifiers.length > 0 || charType !== "word") {
-			startOrExtendRun(charType, modifiers);
-		} else {
-			emitRun(col);
-		}
+		startOrExtendRun(charType, modifiers);
 
 		col += 1;
 	}
