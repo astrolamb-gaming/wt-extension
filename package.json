@@ -2664,6 +2664,124 @@
 				]
 			}
 		],
+		"semanticTokenScopes": [
+			{
+				"language": "wt",
+				"scopes": {
+					"word": [
+						"meta.word.wt"
+					],
+					"whitespace": [
+						"meta.whitespace.wt"
+					],
+					"punctuation": [
+						"punctuation.wt"
+					],
+					"marker": [
+						"punctuation.definition.marker.wt"
+					],
+					"word.italics": [
+						"wt.italic"
+					],
+					"word.bold": [
+						"wt.bold"
+					],
+					"word.underline": [
+						"wt.underline"
+					],
+					"word.strikethrough": [
+						"wt.strikethrough"
+					]
+				}
+			},
+			{
+				"language": "wtNote",
+				"scopes": {
+					"word": [
+						"meta.word.wtNote"
+					],
+					"whitespace": [
+						"meta.whitespace.wtNote"
+					],
+					"punctuation": [
+						"punctuation.wtNote"
+					],
+					"marker": [
+						"punctuation.definition.marker.wtNote"
+					],
+					"word.italics": [
+						"wt.italic"
+					],
+					"word.bold": [
+						"wt.bold"
+					],
+					"word.underline": [
+						"wt.underline"
+					],
+					"word.strikethrough": [
+						"wt.strikethrough"
+					]
+				}
+			}
+		],
+		"configurationDefaults": {
+			"[wt]": {
+				"editor.semanticHighlighting.enabled": true
+			},
+			"[wtNote]": {
+				"editor.semanticHighlighting.enabled": true
+			},
+			"editor.semanticTokenColorCustomizations": {
+				"enabled": true,
+				"rules": {
+					"*.italics": {
+						"fontStyle": "italic"
+					},
+					"*.bold": {
+						"fontStyle": "bold"
+					},
+					"*.underline": {
+						"fontStyle": "underline"
+					},
+					"*.strikethrough": {
+						"fontStyle": "strikethrough"
+					},
+					"*.italics.bold": {
+						"fontStyle": "italic bold"
+					},
+					"*.italics.underline": {
+						"fontStyle": "italic underline"
+					},
+					"*.italics.strikethrough": {
+						"fontStyle": "italic strikethrough"
+					},
+					"*.bold.underline": {
+						"fontStyle": "bold underline"
+					},
+					"*.bold.strikethrough": {
+						"fontStyle": "bold strikethrough"
+					},
+					"*.underline.strikethrough": {
+						"fontStyle": "underline strikethrough"
+					},
+					"*.italics.bold.underline": {
+						"fontStyle": "italic bold underline"
+					},
+					"*.italics.bold.strikethrough": {
+						"fontStyle": "italic bold strikethrough"
+					},
+					"*.italics.underline.strikethrough": {
+						"fontStyle": "italic underline strikethrough"
+					},
+					"*.bold.underline.strikethrough": {
+						"fontStyle": "bold underline strikethrough"
+					},
+					"*.italics.bold.underline.strikethrough": {
+						"fontStyle": "italic bold underline strikethrough"
+					}
+				}
+			}
+		},
 		"debuggers": [
 			{
 				"type": "tts",

@@ -1,20 +1,18 @@
 import { TextDocument } from "vscode-languageserver-textdocument";
-import { connection, documents } from "../server";
-import { integer, SemanticTokens, SemanticTokensBuilder, SemanticTokensParams } from "vscode-languageserver";
+import { integer, SemanticTokens, SemanticTokensBuilder } from "vscode-languageserver";
 
 export const TOKEN_TYPES = [
-	'italics',          // 0
-	'bold',             // 1
-	'underline',        // 2
-	'strikethrough',    // 3
-	'link'             // 4
+	'word',        // 0
+	'whitespace',  // 1
+	'punctuation', // 2
+	'marker'       // 3
 ] as const;
 
 export const TOKEN_MODIFIERS = [
-	'declaration',    // 0
-	'definition',     // 1
-	'readonly',       // 2
-	'reference'       // 3
+	'italics',        // 0
+	'bold',           // 1
+	'underline',      // 2
+	'strikethrough'   // 3
 ] as const;
 
 
@@ -24,19 +22,9 @@ interface Token {
     startChar: number;
     length: number;
     type: string;
-    modifier?: string;
+	modifiers?: string[];
 }
 
-/**
- * Style patterns that map to semantic token types
- * Patterns define opening/closing characters for text styles
- */
-const stylePatterns: Record<string, RegExp> = {
-    'italics': /\*/g,          // *text*
-    'bold': /\^/g,             // ^text^
-    'underline': /_/g,         // _text_
-    'strikethrough': /~/g,     // ~text~
-};
 
 /**
  * Tokenize a document into semantic tokens based on text styling markers.
@@ -45,88 +33,128 @@ const stylePatterns: Record<string, RegExp> = {
 function tokenizeDocument(document: TextDocument): Token[] {
     const tokens: Token[] = [];
     const text = document.getText();
-    
-    // Replace escape sequences and special cases with non-matching placeholders
-    // Use same-length replacements to keep positions aligned
-    const sanitizedText = text
-        .replaceAll("~~~", "@@@")                    // Triple tilde (visual separator)
-        .replaceAll(/\\\*|\\^|\\~|\\_/g, "@@");     // Escaped style markers
-    
-    // Process each style type independently
-    for (const [styleType, pattern] of Object.entries(stylePatterns)) {
-        // Find all positions where the marker occurs
-        const matchPositions: number[] = [];
-        let match;
-        const regexWithoutG = new RegExp(pattern.source);
-        
-        while ((match = pattern.exec(sanitizedText)) !== null) {
-            matchPositions.push(match.index);
-        }
-        
-        // Handle odd number of matches: extend last range to end of document
-        if (matchPositions.length % 2 !== 0) {
-            matchPositions.push(sanitizedText.length - 1);
-        }
-        
-        // Pair opening/closing markers and create tokens for ranges
-        for (let i = 0; i < matchPositions.length - 1; i += 2) {
-            const startPos = matchPositions[i];
-            const endPos = matchPositions[i + 1];
-            
-            // Convert character positions to line/column for each boundary
-            const startLine = document.positionAt(startPos).line;
-            const startChar = document.positionAt(startPos).character;
-            const endLine = document.positionAt(endPos).line;
-            const endChar = document.positionAt(endPos).character;
-            
-            // Create tokens for multi-line ranges (one token per line)
-            if (startLine === endLine) {
-                // Single line: one token for the entire range
-                tokens.push({
-                    line: startLine,
-                    startChar: startChar,
-                    length: endChar - startChar + 1,
-                    type: styleType,
-                });
-            } else {
-                // Multi-line: create tokens for each line in the range
-                // Opening line: from startChar to end of line
-                const startLineLength = document.getText(
-                    { start: { line: startLine, character: 0 }, end: { line: startLine + 1, character: 0 } }
-                ).length - 1; // -1 for newline
-                tokens.push({
-                    line: startLine,
-                    startChar: startChar,
-                    length: startLineLength - startChar + 1,
-                    type: styleType,
-                });
-                
-                // Middle lines
-                for (let line = startLine + 1; line < endLine; line++) {
-                    const lineLength = document.getText(
-                        { start: { line: line, character: 0 }, end: { line: line + 1, character: 0 } }
-                    ).length - 1;
-                    if (lineLength > 0) {
-                        tokens.push({
-                            line: line,
-                            startChar: 0,
-                            length: lineLength,
-                            type: styleType,
-                        });
-                    }
-                }
-                
-                // Closing line: from start to endChar
-                tokens.push({
-                    line: endLine,
-                    startChar: 0,
-                    length: endChar + 1,
-                    type: styleType,
-                });
-            }
-        }
-    }
-    
+
+	const markerToModifier: Record<string, string> = {
+		"*": "italics",
+		"^": "bold",
+		"_": "underline",
+		"~": "strikethrough"
+	};
+
+	const activeModifiers = new Set<string>();
+	const orderedModifiers = [...TOKEN_MODIFIERS];
+
+	const isAlphaNum = (char: string): boolean => /[\p{L}\p{N}]/u.test(char);
+	const isInWordApostrophe = (index: number): boolean => {
+		if (text[index] !== "'") {
+			return false;
+		}
+
+		const prev = index > 0 ? text[index - 1] : "";
+		const next = index + 1 < text.length ? text[index + 1] : "";
+		return isAlphaNum(prev) && isAlphaNum(next);
+	};
+	const isWhitespace = (char: string): boolean => /\s/u.test(char) && char !== "\n" && char !== "\r";
+	const sameModifiers = (left: string[], right: string[]): boolean => left.length === right.length && left.every((value, idx) => value === right[idx]);
+
+	let line = 0;
+	let col = 0;
+	let runStartCol: number | null = null;
+	let runType: string | null = null;
+	let runModifiers: string[] = [];
+
+	const emitRun = (runEndCol: number) => {
+		if (runStartCol === null || runType === null) {
+			return;
+		}
+
+		const length = runEndCol - runStartCol;
+		if (length <= 0) {
+			runStartCol = null;
+			runModifiers = [];
+			return;
+		}
+		tokens.push({
+			line,
+			startChar: runStartCol,
+			length,
+			type: runType,
+			modifiers: runModifiers
+		});
+
+		runStartCol = null;
+		runType = null;
+		runModifiers = [];
+	};
+
+	const getActiveModifiers = (): string[] => orderedModifiers.filter((modifier) => activeModifiers.has(modifier));
+
+	const startOrExtendRun = (charType: string, modifiers: string[]) => {
+		if (runStartCol === null || runType === null) {
+			runStartCol = col;
+			runType = charType;
+			runModifiers = modifiers;
+			return;
+		}
+
+		if (runType !== charType || !sameModifiers(runModifiers, modifiers)) {
+			emitRun(col);
+			runStartCol = col;
+			runType = charType;
+			runModifiers = modifiers;
+		}
+	};
+
+	for (let i = 0; i < text.length; i++) {
+		const char = text[i];
+		if (char === "\r") {
+			continue;
+		}
+
+		if (char === "\n") {
+			emitRun(col);
+			line += 1;
+			col = 0;
+			continue;
+		}
+
+		if (char in markerToModifier) {
+			const modifier = markerToModifier[char];
+			const isClosingMarker = activeModifiers.has(modifier);
+			const markerModifiers = getActiveModifiers();
+			if (!isClosingMarker && !markerModifiers.includes(modifier)) {
+				markerModifiers.push(modifier);
+			}
+
+			startOrExtendRun("marker", markerModifiers);
+
+			if (isClosingMarker) {
+				activeModifiers.delete(modifier);
+			} else {
+				activeModifiers.add(modifier);
+			}
+
+			col += 1;
+			continue;
+		}
+
+		const charType = (isAlphaNum(char) || isInWordApostrophe(i))
+			? "word"
+			: isWhitespace(char)
+				? "whitespace"
+				: "punctuation";
+		const modifiers = getActiveModifiers();
+		if (modifiers.length > 0 || charType !== "word") {
+			startOrExtendRun(charType, modifiers);
+		} else {
+			emitRun(col);
+		}
+
+		col += 1;
+	}
+
+	emitRun(col);
+
     return tokens;
 }
 
@@ -144,27 +172,26 @@ export function buildSemanticTokens(tokens: Token[]): SemanticTokens {
 	const builder = new SemanticTokensBuilder();
 
 	for (const token of tokens) {
-		// Keep string tokens available to server-side analyzers, but do not
-		// emit them in the semantic token stream returned to the client.
-		if (token.type === 'string') {
-			continue;
-		}
 		const typeIndex = TOKEN_TYPES.indexOf(token.type as any);
 		if (typeIndex === -1) {
 			console.log(`Unknown token type: ${token.type}`);
 			continue;
 		}
 
-		const modifierIndex = token.modifier 
-			? TOKEN_MODIFIERS.indexOf(token.modifier as any)
-			: 0;
+		let modifierBits = 0;
+		for (const modifier of token.modifiers ?? []) {
+			const modifierIndex = TOKEN_MODIFIERS.indexOf(modifier as any);
+			if (modifierIndex !== -1) {
+				modifierBits |= (1 << modifierIndex);
+			}
+		}
 
 		builder.push(
 			token.line,
 			token.startChar,
 			token.length,
 			typeIndex,
-			modifierIndex === -1 ? 0 : (1 << modifierIndex)
+			modifierBits
 		);
 	}
 

@@ -77,8 +77,8 @@ connection.languages.semanticTokens.on((params: SemanticTokensParams) => {
 	if (!document) {
 		return getEmptySemanticTokens();
 	}
-	// return getSemanticTokens(document);
-    return getEmptySemanticTokens();
+	return getSemanticTokens(document);
+    // return getEmptySemanticTokens();
 });
 
 // Make the text document manager listen on the connection

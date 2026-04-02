@@ -166,7 +166,7 @@ async function loadExtensionWorkspace (
         
         const wordWatcher = new WordWatcher(context, workspace);            // wt.wordWatcher
         const proximity = new Proximity(context, workspace);
-        const textStyles = new TextStyles(context, workspace);    
+        // const textStyles = new TextStyles(context, workspace);    
         const recycleBin = new RecyclingBinView(context, workspace);        
         await recycleBin.initialize();
         report("Loaded recycling bin");
@@ -215,7 +215,7 @@ async function loadExtensionWorkspace (
             // ['wt.proximity', 'proximity', proximity],
             ['wt.very', 'very', veryIntellisense],  
             ['wt.colors', 'colors', colorIntellisense],
-            ['wt.textStyle', 'textStyle', textStyles],
+            // ['wt.textStyle', 'textStyle', textStyles],
             ['wt.autocorrections', 'autocorrections', autocorrection],
             ['wt.overview', 'overview', fragmentOverview],
             ['wt.wtSearch.results', 'searchResults', searchResultsView],
