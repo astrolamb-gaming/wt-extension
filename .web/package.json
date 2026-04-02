@@ -2,7 +2,7 @@
 	"name": "wtaniwe-web",
 	"displayName": "WTANIWE (web) - Writing Tool, An Integrated Writing Environment (web extension)",
 	"description": "Writing Tool, An Integrated Writing Environment (web extension)",
-	"version": "0.0.155",
+	"version": "0.0.156",
 	"publisher": "luke-callaghan",
 	"icon": "media/icon.png",
 	"private": false,
@@ -160,6 +160,11 @@
 				},
 				"wt.timedSearches.spacingHighlights": {
 					"description": "Enable highlighting for misalligned spacing (two spaces after a punctuation when you normally use one, or vice versa)",
+					"type": "boolean",
+					"default": true
+				},
+				"wt.timedSearches.documentLinks": {
+					"description": "Enable highlighting for url and fragment links",
 					"type": "boolean",
 					"default": true
 				},
@@ -432,14 +437,6 @@
 				"title": "Edit Markdown Description"
 			},
 			{
-				"command": "wt.outline.editDescription",
-				"title": "Edit Description"
-			},
-			{
-				"command": "wt.outline.editMarkdownDescription",
-				"title": "Edit Markdown Description"
-			},
-			{
 				"command": "wt.outline.newSnip",
 				"title": "Create New Snip",
 				"icon": "$(output-view-icon)"
@@ -672,7 +669,7 @@
 			},
 			{
 				"command": "wt.synonyms.updateCachePath",
-				"title": "Writing Tool: Update Cache Path for Workspace"
+				"title": "Writing Tool: Change Synonyms Cache Database"
 			},
 			{
 				"command": "wt.editor.remove",
@@ -954,6 +951,10 @@
 			{
 				"command": "wt.notebook.refresh",
 				"title": "Writing Tool: Refresh notebook"
+			},
+			{
+				"command": "wt.notebook.openNote",
+				"title": "Writing Tool: Open Notebook"
 			},
 			{
 				"command": "wt.reloadWatcher.reloadWorkspace",

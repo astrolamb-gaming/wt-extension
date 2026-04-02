@@ -8,6 +8,15 @@ import { ExtensionGlobals } from '../extension';
 import * as MarkdownIt from 'markdown-it';
 import { NotebookPanel, NotebookPanelNote } from './notebookPanel';
 
+type NotebookWebviewMessage = {
+    kind: 'updateHtml',
+    noteId: string
+} | {
+    kind: 'openNotebook'
+} | {
+    kind: 'newNotebook'
+}
+
 export class NotebookWebview implements vscode.WebviewViewProvider {
 
     private _view?: vscode.WebviewView;
@@ -63,8 +72,12 @@ export class NotebookWebview implements vscode.WebviewViewProvider {
         };
 
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-        this.context.subscriptions.push(webviewView.webview.onDidReceiveMessage(data => {
-            this.updateViewForNote(data);
+        this.context.subscriptions.push(webviewView.webview.onDidReceiveMessage((data: NotebookWebviewMessage) => {
+            switch (data.kind) {
+                case 'updateHtml': this.updateViewForNote(data.noteId); break;
+                case 'openNotebook': vscode.commands.executeCommand("wt.notebook.openNote", this.selectedNoteId, true);
+                case 'newNotebook': vscode.commands.executeCommand("wt.notebook.addNote");
+            }
         }));
     }
 
@@ -131,7 +144,10 @@ export class NotebookWebview implements vscode.WebviewViewProvider {
             }
             
             if (noteId === this.selectedNoteId) {
-                noteHtml = html;
+                noteHtml = `
+                    ${html}
+                `;
+
                 noteSelects.push(`<vscode-option selected value="${noteId}">${titleString}</vscode-option>`);
             }
             else {
@@ -162,6 +178,12 @@ export class NotebookWebview implements vscode.WebviewViewProvider {
                     body {
                         font-size: 15px;
                     }
+                    .log-settings-row {
+                        align-items: center;
+                        display: flex;
+                        flex-wrap: wrap;
+                    }
+
                 </style>    
                 <body>
                 
@@ -170,10 +192,26 @@ export class NotebookWebview implements vscode.WebviewViewProvider {
                         (function () {
                             const vscode = acquireVsCodeApi();
 
-                            const element = document.getElementById("select-note");
-                            element.addEventListener('change', (select) => {
-                                // Once the page is loaded, request the api key from the main environment
-                                vscode.postMessage(select.target.value);
+                            const selectElement = document.getElementById("select-note");
+                            selectElement.addEventListener('change', (select) => {
+                                vscode.postMessage({
+                                    kind: 'updateHtml',
+                                    noteId: select.target.value
+                                });
+                            });
+
+                            const openButtonElement = document.getElementById('open-button');
+                            openButtonElement.addEventListener('click', () => {
+                                vscode.postMessage({
+                                    kind: 'openNotebook',
+                                });
+                            });
+
+                            const newButtonElement = document.getElementById('new-button');
+                            newButtonElement.addEventListener('click', () => {
+                                vscode.postMessage({
+                                    kind: 'newNotebook',
+                                });
                             });
                         }());
                     </script>
@@ -188,6 +226,13 @@ export class NotebookWebview implements vscode.WebviewViewProvider {
                     <hr />
 
                     ${noteHtml || '<h1>Nothing hovered yet</h1>'}
+
+                    <br /><br />
+                    <div class="log-settings-row">
+                        <vscode-button ${!noteHtml && 'disabled'} id="open-button">Open</vscode-button>
+                        &nbsp;&nbsp;&nbsp;
+                        <vscode-button id="new-button">+ New Notebook</vscode-button>
+                    </div>
                 </body>
             </html>`;
     }

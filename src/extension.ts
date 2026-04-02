@@ -44,7 +44,7 @@ import { FileLinker } from './miscTools/fileLinker';
 import { SearchResultsView } from './search/searchResultsView';
 import { SearchBarView } from './search/searchBarView';
 import { FragmentOverviewView } from './fragmentOverview/fragmentOverview';
-import { FragmentLinker } from './miscTools/fragmentLinker';
+import { DocumentLinker } from './miscTools/documentLinker';
 import { defaultProgress, getSectionedProgressReporter, progressOnViews, statFile } from './miscTools/help';
 import { WTNotebookSerializer } from './notebook/notebookApi/notebookSerializer';
 import { WTNotebookController } from './notebook/notebookApi/notebookController';
@@ -61,6 +61,10 @@ export const wordSeparator: string = '(^|[\\.\\?\\:\\;,\\(\\)!\\&\\s\\+\\-\\n"\'
 export const wordSeparatorRegex = new RegExp(wordSeparator.split('|')[1], 'g');
 export const sentenceSeparator: RegExp = /[.?!]/g;
 export const paragraphSeparator: RegExp = /\n\n/g;
+
+export const urlMainRegex = /(https?|ftp):\/\/[^\s\/$.?#].[^\s]*/ig;
+export const urlRegex = new RegExp(`${wordSeparator}(?<link>${urlMainRegex.source})${wordSeparator}`, 'gi');
+
 export let globalWorkspace: Workspace | undefined;
 
 export class ExtensionGlobals {
@@ -199,12 +203,12 @@ async function loadExtensionWorkspace (
         report("Loaded status bar items");
 
         new FileLinker(context, workspace);
-        const linker = new FragmentLinker(context);
+        const linker = new DocumentLinker(context);
 
         const timedViews = new TimedView(context, [
             ['wt.notebook.tree', 'notebook', notebook],
             ['wt.todo', 'todo', todo],
-            ['wt.fragmentLinker', 'fragmentLinker', linker],
+            ['wt.documentLinker', 'documentLinker', linker],
             ['wt.spellcheck', 'spellcheck', spellcheck],
             ['wt.wordWatcher', 'wordWatcher', wordWatcher],
             ['wt.spacingHighlights', 'spacingHighlights', spacingHighlights],
@@ -263,8 +267,6 @@ async function loadExtensionWorkspace (
         throw e;
     }
 };
-
-// c:/Users/lukec/Desktop/synonyms_repo/synonyms_level
 
 async function handleLoadFailure (err: Error | string | unknown) {
     // First thing to do, is to set wt.valid context value to false
