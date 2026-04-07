@@ -104,6 +104,7 @@ connection.onHover(async (_textDocumentPosition: TextDocumentPositionParams): Pr
 			kind: 'markdown',
 			value: 'Hover information goes here'
 		}
+	};
 	return hover;
 });
 //#endregion
