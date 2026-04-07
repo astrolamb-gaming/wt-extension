@@ -242,7 +242,7 @@ export class SemanticTokensCache {
 		timestamp: number;
 	}> = new Map();
 
-	private maxCacheSize: integer = 10; // Cache at most 10 documents
+	private maxCacheSize: integer = 20; // Cache at most 20 documents
 	private cacheLifetime: number = 5 * 60 * 1000; // 5 minutes in milliseconds
 	private resultIdCounter: integer = 0;
 

@@ -1,4 +1,4 @@
-import { createConnection, DidChangeConfigurationNotification, InitializeParams, InitializeResult, ProposedFeatures, TextDocuments, TextDocumentSyncKind, SemanticTokensRequest, SemanticTokensParams } from 'vscode-languageserver/node';
+import { createConnection, DidChangeConfigurationNotification, InitializeParams, InitializeResult, ProposedFeatures, TextDocuments, TextDocumentSyncKind, SemanticTokensRequest, SemanticTokensParams, TextDocumentPositionParams, Hover, CompletionItem, DocumentDiagnosticParams, DocumentDiagnosticReport, DocumentDiagnosticReportKind, Diagnostic } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { getSemanticTokens, TOKEN_TYPES, TOKEN_MODIFIERS, getEmptySemanticTokens, getSemanticTokensCache } from './semanticTokens/semanticTokens';
 import { get } from 'http';
@@ -71,17 +71,58 @@ connection.onInitialized(async () => {
 	}
 });
 
-// Semantic tokens request handler
+//#region Diagnostics Provider
+connection.languages.diagnostics.on(async (params:DocumentDiagnosticParams): Promise<DocumentDiagnosticReport> => {
+	let diagnostics: Diagnostic[] = [];
+	// Add diagnostics here.
+	const ret = {
+		kind: DocumentDiagnosticReportKind.Full,
+		items: diagnostics
+	} satisfies DocumentDiagnosticReport;
+	return ret;
+});
+//#endregion
+
+
+//#region Completion Provider
+connection.onCompletion(async (_textDocumentPosition: TextDocumentPositionParams): Promise<CompletionItem[] | undefined> => {
+	const completionItems: CompletionItem[] = [];
+	// Add items here.
+	return completionItems;
+});
+//#endregion
+
+
+//#region Hover Provider
+connection.onHover(async (_textDocumentPosition: TextDocumentPositionParams): Promise<Hover | undefined> => {
+	// This is where hover information would be computed and returned.
+	if (!_textDocumentPosition || !_textDocumentPosition.textDocument.uri.endsWith('.wt')) {
+		return undefined;
+	}
+	const hover: Hover = {
+		contents: {
+			kind: 'markdown',
+			value: 'Hover information goes here'
+		}
+	return hover;
+});
+//#endregion
+
+
+//#region Semantic Tokens Provider
 connection.languages.semanticTokens.on((params: SemanticTokensParams) => {
 	const document = documents.get(params.textDocument.uri);
 	if (!document) {
 		return getEmptySemanticTokens();
 	}
 	const cache = getSemanticTokensCache();
+	// This is where the semantic tokens are computed and cached.
 	const tokens = getSemanticTokens(document);
 	cache.set(document.uri, document.version, tokens);
 	return tokens;
 });
+//#endregion
+
 
 // Note: Delta handler commented due to LSP library version limitations
 // The cache infrastructure supports delta computation via getDelta() method

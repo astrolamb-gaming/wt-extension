@@ -46,7 +46,6 @@ export function activateLanguageServerClient(context: vscode.ExtensionContext, c
     );
 
     // Start the LSP client so requests (including semantic tokens) flow to the server.
-    // context.subscriptions.push(client.start());
     client.start();
 
 }
