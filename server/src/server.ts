@@ -74,7 +74,16 @@ connection.onInitialized(async () => {
 //#region Diagnostics Provider
 connection.languages.diagnostics.on(async (params:DocumentDiagnosticParams): Promise<DocumentDiagnosticReport> => {
 	let diagnostics: Diagnostic[] = [];
+
+	if (!params || !params.textDocument.uri.endsWith('.wt')) {
+		return {
+			kind: DocumentDiagnosticReportKind.Full,
+			items: diagnostics
+		} satisfies DocumentDiagnosticReport;
+	}
+
 	// Add diagnostics here.
+
 	const ret = {
 		kind: DocumentDiagnosticReportKind.Full,
 		items: diagnostics
@@ -86,6 +95,9 @@ connection.languages.diagnostics.on(async (params:DocumentDiagnosticParams): Pro
 
 //#region Completion Provider
 connection.onCompletion(async (_textDocumentPosition: TextDocumentPositionParams): Promise<CompletionItem[] | undefined> => {
+	if (!_textDocumentPosition || !_textDocumentPosition.textDocument.uri.endsWith('.wt')) {
+		return undefined;
+	}
 	const completionItems: CompletionItem[] = [];
 	// Add items here.
 	return completionItems;
@@ -99,13 +111,15 @@ connection.onHover(async (_textDocumentPosition: TextDocumentPositionParams): Pr
 	if (!_textDocumentPosition || !_textDocumentPosition.textDocument.uri.endsWith('.wt')) {
 		return undefined;
 	}
+	// Build Hover information.
 	const hover: Hover = {
 		contents: {
 			kind: 'markdown',
 			value: 'Hover information goes here'
 		}
 	};
-	return hover;
+	// Returning undefined until proper implementation is in place.
+	return undefined;
 });
 //#endregion
 
