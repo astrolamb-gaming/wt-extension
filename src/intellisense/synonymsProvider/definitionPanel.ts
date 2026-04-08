@@ -5,11 +5,10 @@ import { Packageable } from '../../packageable';
 import { Workspace } from '../../workspace/workspaceClass';
 import { ExtensionGlobals } from '../../extension';
 import * as MarkdownIt from 'markdown-it';
-import { HoverProvider } from '../synonyms/hoverProvider';
-import { getHoveredWord, getHoverMarkdown } from '../common';
-import { SynonymProviderType } from './provideSynonyms';
+import { getHoveredWord } from '../common';
+import { setHoverResultCallback } from '../../../client/out/client';
 
-export class DefinitionsPanelWebview implements vscode.WebviewViewProvider, vscode.HoverProvider {
+export class DefinitionsPanelWebview implements vscode.WebviewViewProvider {
 
     private _view?: vscode.WebviewView;
     private readonly _extensionUri: vscode.Uri;
@@ -20,12 +19,10 @@ export class DefinitionsPanelWebview implements vscode.WebviewViewProvider, vsco
     ) { 
         this._extensionUri = context.extensionUri;
         this.context.subscriptions.push(vscode.window.registerWebviewViewProvider('wt.definitions', this));
-        this.context.subscriptions.push(vscode.languages.registerHoverProvider({
-            language: 'wt',
-        }, this));
-        this.context.subscriptions.push(vscode.languages.registerHoverProvider({
-            language: 'wtNote',
-        }, this));
+        // Register the LSP hover callback so the webview updates whenever the server
+        // sends hover markdown (triggered by cursor moves or VS Code's hover tooltip).
+        setHoverResultCallback(md => this.updateViewForDefinition(md));
+        this.context.subscriptions.push({ dispose: () => setHoverResultCallback(null) });
         this.registerCommands();
     }
 
@@ -64,15 +61,13 @@ export class DefinitionsPanelWebview implements vscode.WebviewViewProvider, vsco
     }
 
     async checkSelection (document: vscode.TextDocument, selection: vscode.Selection) {
+        if (document.languageId !== 'wt' && document.languageId !== 'wtNote') return;
         const position = selection.active;
-        const hover = getHoveredWord(document, position);
-        if (!hover) return;
-
-        const currentProvider: SynonymProviderType = await vscode.commands.executeCommand('wt.intellisense.synonyms.getCurrentProvider');
-        const hoverMd = await getHoverMarkdown(hover.text, currentProvider);
-        if (!hoverMd) return;
-
-        return this.updateViewForDefinition(hoverMd);
+        // Quick local word-boundary check — skip the LSP roundtrip if cursor isn't on a word.
+        if (!getHoveredWord(document, position)) return;
+        // Trigger the LSP hover provider; the middleware in client.ts will capture the
+        // server's response and call updateViewForDefinition via setHoverResultCallback.
+        vscode.commands.executeCommand('vscode.executeHoverProvider', document.uri, position);
     }
 
 

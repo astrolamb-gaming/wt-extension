@@ -19,14 +19,14 @@ export class SynonymsIntellisense {
     }
 
     public async init () {
-        const wtSelector: vscode.DocumentFilter = <vscode.DocumentFilter>{
-            language: 'wt'
-        };
-
         await SynonymsProvider.init(this.workspace);
-        this.context.subscriptions.push(vscode.languages.registerCompletionItemProvider (wtSelector, new CompletionItemProvider(this.context, this.workspace, this.useWordHippo)));
-        this.context.subscriptions.push(vscode.languages.registerHoverProvider (wtSelector, new HoverProvider(this.context, this.workspace)));
-        this.context.subscriptions.push(vscode.languages.registerCodeActionsProvider (wtSelector, new CodeActionProvider(this.context, this.workspace, this.personalDictionary)));
+
+        // CompletionItemProvider is no longer registered as a VS Code completion provider
+        // (completions are now handled by the language server), but its constructor
+        // registers commands (e.g. wt.intellisense.synonyms.getCurrentProvider) that are
+        // still used by keybindings and other features.
+        new CompletionItemProvider(this.context, this.workspace, this.useWordHippo);
+
         this.registerCommands();
     }
 

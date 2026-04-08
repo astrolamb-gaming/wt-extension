@@ -52,7 +52,7 @@ import * as console from './miscTools/vsconsole';
 import { SpacingHighlights } from './miscTools/spacingHighlights';
 import { NotebookWebview } from './notebook/notebookWebview';
 import { DefinitionsPanelWebview } from './intellisense/synonymsProvider/definitionPanel';
-import { activateLanguageServerClient } from '../client/out/client';
+import { activateLanguageServerClient, sendClientNotification } from '../client/out/client';
 
 export const decoder = new TextDecoder();
 export const encoder = new TextEncoder();
@@ -166,6 +166,10 @@ async function loadExtensionWorkspace (
         
         const wordWatcher = new WordWatcher(context, workspace);            // wt.wordWatcher
         const proximity = new Proximity(context, workspace);
+
+        // Push initial state to the language server (safe to call before server is ready — queued)
+        personalDictionary.pushToServer();
+        wordWatcher.pushToServer();
         // const textStyles = new TextStyles(context, workspace);    
         const recycleBin = new RecyclingBinView(context, workspace);        
         await recycleBin.initialize();

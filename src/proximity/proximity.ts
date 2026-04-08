@@ -329,10 +329,6 @@ export class Proximity implements Timed, Packageable<any> {
             }
         }).flat();
 
-        this.context.subscriptions.push(vscode.languages.registerCodeActionsProvider (<vscode.DocumentFilter>{
-            language: 'wt'
-        }, new ProximityCodeActions(context, workspace, this)));
-
         this.registerCommands();
     }
     getUpdatesAreVisible(): boolean {

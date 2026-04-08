@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Packageable } from '../../packageable';
 import { Workspace } from '../../workspace/workspaceClass';
 import { Dict } from './dictionary';
+import { sendPersonalDictionaryUpdate } from '../../../client/out/client';
 
 export class PersonalDictionary implements Packageable<'wt.personalDictionary'> {
     private dict: Dict;
@@ -10,6 +11,11 @@ export class PersonalDictionary implements Packageable<'wt.personalDictionary'> 
         return {
             'wt.personalDictionary': this.dict
         }
+    }
+
+    /** Push the current dictionary state to the language server. */
+    pushToServer(): void {
+        sendPersonalDictionaryUpdate(this.dict);
     }
 
     search (word: string): boolean {
@@ -54,6 +60,7 @@ export class PersonalDictionary implements Packageable<'wt.personalDictionary'> 
         this.dict[word] = 1;
         vscode.commands.executeCommand('wt.timedViews.update');
         Workspace.forcePackaging(this.context, 'wt.personalDictionary', this.dict);
+        sendPersonalDictionaryUpdate(this.dict);
     }
 
     // Command for removing a word from the personal dictionary
@@ -74,6 +81,7 @@ export class PersonalDictionary implements Packageable<'wt.personalDictionary'> 
         // Remove the word
         delete this.dict[remove];
         Workspace.forcePackaging(this.context, 'wt.personalDictionary', this.dict);
+        sendPersonalDictionaryUpdate(this.dict);
     }
 
 

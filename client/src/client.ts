@@ -1,51 +1,133 @@
 import * as vscode from 'vscode';
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
+import {
+    LanguageClient,
+    LanguageClientOptions,
+    ServerOptions,
+    TransportKind,
+} from 'vscode-languageclient/node';
 import * as path from 'path';
 
+// Notification method strings — kept in sync with server/src/protocol/notifications.ts
+const WT_PERSONAL_DICT_UPDATE = 'wt/personalDictionaryUpdate';
+const WT_WORD_WATCHER_UPDATE  = 'wt/wordWatcherUpdate';
+const WT_CONFIG_UPDATE        = 'wt/configUpdate';
+
 let client: LanguageClient;
+
+/** Notifications sent before the server is ready are queued here and flushed on ready. */
+const pendingNotifications: Array<{ method: string; params: unknown }> = [];
+let serverReady = false;
+
+/**
+ * Low-level notification helper — safe to call before the server has finished
+ * initialising; messages are queued and flushed when the server signals readiness.
+ */
+export function sendClientNotification(method: string, params: unknown): void {
+    if (serverReady && client) {
+        client.sendNotification(method, params);
+    } else {
+        pendingNotifications.push({ method, params });
+    }
+}
+
+/** Push the full personal dictionary to the language server. */
+export function sendPersonalDictionaryUpdate(dict: Record<string, 1>): void {
+    sendClientNotification(WT_PERSONAL_DICT_UPDATE, { dict });
+}
+
+/** Push the current word-watcher regex pattern string to the language server. */
+export function sendWordWatcherUpdate(pattern: string | null): void {
+    sendClientNotification(WT_WORD_WATCHER_UPDATE, { pattern });
+}
+
+/**
+ * Called whenever the language server responds with hover markdown.
+ * Register a callback here to update UI (e.g. the definitions panel webview).
+ */
+let onHoverResultCallback: ((markdown: string) => void) | null = null;
+export function setHoverResultCallback(cb: ((markdown: string) => void) | null): void {
+    onHoverResultCallback = cb;
+}
 
 
 export function activateLanguageServerClient(context: vscode.ExtensionContext, clientOptions?: LanguageClientOptions) {
     console.log("Language server started");
-    // Start the language server logic here
+
     const serverModule = context.asAbsolutePath(
 		path.join('server', 'out', 'server.js')
 	);
 
-	// If the extension is launched in debug mode then the debug server options are used
-	// Otherwise the run options are used
 	const serverOptions: ServerOptions = {
-		run: { module: serverModule, transport: TransportKind.ipc },
-		debug: {
-			module: serverModule,
-			transport: TransportKind.ipc,
-		}
+		run:   { module: serverModule, transport: TransportKind.ipc },
+		debug: { module: serverModule, transport: TransportKind.ipc },
 	};
 
     if (!clientOptions) {
-        // Options to control the language client
         clientOptions = {
-            // Register the server for plain text documents
-            documentSelector: [{ scheme: 'file', language: 'wt' },{scheme:'file',language:'json'}],
+            documentSelector: [{ scheme: 'file', language: 'wt' }, { scheme: 'file', language: 'json' }],
             synchronize: {
-                // Notify the server about file changes to '.clientrc files contained in the workspace
                 fileEvents: [
                     vscode.workspace.createFileSystemWatcher('**/*.wt'),
-                    vscode.workspace.createFileSystemWatcher('**/*.json')
-                ]
-            }
+                    vscode.workspace.createFileSystemWatcher('**/*.json'),
+                ],
+            },
+            middleware: {
+                // Intercept the server's hover response:
+                // 1. Pass the result through so VS Code still shows the tooltip.
+                // 2. Forward the markdown to any registered callback (e.g. definitions panel).
+                provideHover: async (document, position, token, next) => {
+                    const result = await next(document, position, token);
+                    if (result && onHoverResultCallback) {
+                        const rawContents = result.contents;
+                        const contentsArray = Array.isArray(rawContents) ? rawContents : [rawContents];
+                        const md = contentsArray
+                            .map(c => typeof c === 'string' ? c : (c as vscode.MarkdownString).value ?? '')
+                            .filter(Boolean)
+                            .join('\n\n');
+                        if (md) onHoverResultCallback(md);
+                    }
+                    return result;
+                },
+            },
         };
 	}
 
-    // Initialize the language client
     client = new LanguageClient(
         'wt-lsp',
         'wt-lsp',
         serverOptions,
-        clientOptions
+        clientOptions!
     );
 
-    // Start the LSP client so requests (including semantic tokens) flow to the server.
-    client.start();
+    // start() returns a Promise<void> in vscode-languageclient v9
+    client.start().then(() => {
+        serverReady = true;
 
+        // Flush queued notifications (personalDict / wordWatcher may have been
+        // pushed before the server finished initialising)
+        for (const notif of pendingNotifications) {
+            client.sendNotification(notif.method, notif.params);
+        }
+        pendingNotifications.length = 0;
+
+        // Push current synonyms config (API key + cache location)
+        const config = vscode.workspace.getConfiguration();
+        client.sendNotification(WT_CONFIG_UPDATE, {
+            apiKey:        config.get<string>('wt.synonyms.apiKey')        ?? null,
+            cacheLocation: config.get<string>('wt.synonyms.cacheLocation') ?? null,
+        });
+    });
+
+    // Re-push config whenever the user changes relevant settings
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (!e.affectsConfiguration('wt.synonyms')) return;
+            const config = vscode.workspace.getConfiguration();
+            sendClientNotification(WT_CONFIG_UPDATE, {
+                apiKey:        config.get<string>('wt.synonyms.apiKey')        ?? null,
+                cacheLocation: config.get<string>('wt.synonyms.cacheLocation') ?? null,
+            });
+        })
+    );
 }
+

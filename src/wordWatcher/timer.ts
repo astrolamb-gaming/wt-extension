@@ -8,6 +8,7 @@ import { addWordToWatchedWords } from './engine';
 import { TimedView } from '../timedView';
 import { Color, parseForColor } from './colorPick';
 import { Workspace } from '../workspace/workspaceClass';
+import { sendWordWatcherUpdate } from '../../client/out/client';
 import { Spellcheck } from '../intellisense/spellcheck/spellcheck';
 
 const defaultDecorations: vscode.DecorationRenderOptions = {
@@ -78,6 +79,9 @@ export function getWordWatcherRegexInfo (this: WordWatcher): WatchedWordRegexInf
                 excludedRegeces,
                 watchedRegeces
             };
+
+            // Push the updated pattern to the language server
+            sendWordWatcherUpdate(regexString);
         }
     }
     else {

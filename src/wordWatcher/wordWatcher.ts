@@ -14,6 +14,7 @@ import { colorPick } from './colorPick';
 import { v4 as uuid } from 'uuid';
 import { getHoveredWord } from '../intellisense/common';
 import { WordWatcherCodeActionProvider } from './wordWatcherCodeActions';
+import { sendWordWatcherUpdate } from '../../client/out/client';
 
 type WordSearchEntry = {
 	id: 'wordSearch';
@@ -127,6 +128,12 @@ export class WordWatcher implements vscode.TreeDataProvider<WordEntry>, Packagea
     changeColor = changeColor;
     changePattern = changePattern;
 
+    /** Push the current word-watcher regex pattern to the language server. */
+    pushToServer(): void {
+        const { regexString } = this.getWordWatcherRegexInfo();
+        sendWordWatcherUpdate(regexString);
+    }
+
     public wasUpdated: boolean = true;
     public lastCalculatedRegeces: {
         watchedAndEnabled: string[],
@@ -178,9 +185,6 @@ export class WordWatcher implements vscode.TreeDataProvider<WordEntry>, Packagea
         });
 
         this.view = vscode.window.createTreeView('wt.wordWatcher', { treeDataProvider: this });
-        this.context.subscriptions.push(vscode.languages.registerCodeActionsProvider ({
-            language: 'wt'
-        }, new WordWatcherCodeActionProvider(this.context, this.workspace, this)));
 		context.subscriptions.push(this.view);
         context.subscriptions.push(defaultWatchedWordDecoration);
         this.registerCommands();
