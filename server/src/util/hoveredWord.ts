@@ -1,10 +1,24 @@
+/**
+ * hoveredWord.ts
+ *
+ * Pure-string port of the word-boundary scanner in src/intellisense/common.ts.
+ * Operates on a raw document string + a numeric character offset rather than on
+ * VS Code's TextDocument / Position objects, so it can run inside the language
+ * server without any VS Code API dependency.
+ */
+
 export type HoverPosition = {
+    /** Inclusive start offset of the word in the document string. */
     start: number;
+    /** Exclusive end offset of the word in the document string. */
     end: number;
+    /** The original word text, preserving diacritics and casing. */
     text: string;
+    /** The word with diacritics stripped (used for dictionary lookups). */
     strippedText: string;
 };
 
+/** Strips combining diacritical marks (accents, umlauts, etc.) from a string. */
 function stripDiacritics(text: string): string {
     return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
@@ -17,15 +31,18 @@ function stripDiacritics(text: string): string {
  * string + numeric offset rather than a vscode.TextDocument + vscode.Position.
  */
 export function getHoveredWord(text: string, off: number): HoverPosition | null {
+    // Characters that act as word boundaries
     const stops = /[\.\?,\s\;'":\(\)\{\}\[\]\/\\\-!\*_]/;
 
     const char = text[off];
 
     let start: number | undefined;
     let end: number | undefined;
-    let goBack = true;
-    let goLeft = true;
+    let goBack = true;  // whether to scan left for the word start
+    let goLeft = true;  // whether to scan right for the word end
 
+    // If the cursor is sitting directly on a stop character, decide which
+    // adjacent word (if any) should be returned.
     if (stops.test(char)) {
         let beforeStops = false;
         if (off !== 0) {
@@ -37,16 +54,20 @@ export function getHoveredWord(text: string, off: number): HoverPosition | null 
         }
 
         if (!beforeStops) {
+            // Non-stop char is immediately to the left — use the left word.
             goLeft = false;
             end = off;
         } else if (!afterStops) {
+            // Non-stop char is immediately to the right — use the right word.
             goBack = false;
             start = off + 1;
         } else {
+            // Stop chars on both sides — the cursor is between words; nothing to hover.
             return null;
         }
     }
 
+    // Scan left until a stop character (or the document start) to find the word start.
     if (goBack) {
         let current = off - 1;
         while (text[current] && !stops.test(text[current])) {
@@ -56,6 +77,7 @@ export function getHoveredWord(text: string, off: number): HoverPosition | null 
         goBack = false;
     }
 
+    // Scan right until a stop character (or the document end) to find the word end.
     if (goLeft) {
         let current = off + 1;
         while (text[current] && !stops.test(text[current])) {

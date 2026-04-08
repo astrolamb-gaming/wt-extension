@@ -8,6 +8,7 @@ import { getAllIndices, getTextCapitalization, stripDiacritics, transformToCapit
 import { ExtensionGlobals } from '../extension';
 import { OutlineNode } from '../outline/nodes_impl/outlineNode';
 import { report } from 'process';
+import { sendAutocorrectUpdate } from '../../client/out/client';
 export const commonReplacements = {
     '”': '"',
     '“': '"',
@@ -33,7 +34,7 @@ type HowMany = number;
 type CorrectionKind = 'correction' | 'specialCharacterSwap';
 
 
-export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclusions" | "wt.autocorrections.corrections" | "wt.autocorrections.dontCorrect">, vscode.CodeActionProvider<vscode.CodeAction> {
+export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclusions" | "wt.autocorrections.corrections" | "wt.autocorrections.dontCorrect"> {
     private static BlueUnderline: vscode.TextEditorDecorationType = vscode.window.createTextEditorDecorationType({
         overviewRulerLane: vscode.OverviewRulerLane.Right,
         overviewRulerColor: 'royalblue',
@@ -48,17 +49,13 @@ export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclu
     } };
     private specialCharactersSearch: RegExp;
 
-    private diagnosticCollection: vscode.DiagnosticCollection;
-
-    // Use the file name as the main identifier for files -- as we want to maintain this
-    //      collection even when files are moved
-    private allCorrections: { [index: UriFileName]: {
-        [index: UnderlineIdentifier]: {
-            kind: CorrectionKind
+    // Keyed by full document URI string (uri.toString())
+    private allCorrections: { [uriString: string]: {
+        [id: string]: {
+            kind: CorrectionKind;
             range: vscode.Range;
             original: string; 
             corrected: string;
-            active: boolean;
             nodeLabel: string;
         }
     } } = {};
@@ -163,6 +160,7 @@ export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclu
     private async createUnderliner (uri: vscode.Uri, original: string, replacement: string, replacedRange: vscode.Range, correctionKind: CorrectionKind='correction') {
 
         const fileName = vscodeUri.Utils.basename(uri);
+        const uriString = uri.toString();
 
         // Query for the node representing this document to get its label
         // Label is used in the diagnostic to show where it came from
@@ -178,22 +176,22 @@ export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclu
         }
         
         const id = Math.random().toString(); 
-        if (!this.allCorrections[fileName]) {
-            this.allCorrections[fileName] = {};
+        if (!this.allCorrections[uriString]) {
+            this.allCorrections[uriString] = {};
         }
         
-        this.allCorrections[fileName][id] = {
+        this.allCorrections[uriString][id] = {
             kind: correctionKind,
-            active: true,
             corrected: replacement,
             original: original,
             range: replacedRange,
             nodeLabel: label
         };
+        this.pushToServer();
 
         setTimeout(() => {
-            // After the under line timer elapses, remove the underline and set `active` to false
-            this.allCorrections[fileName][id].active = false;
+            // After the underline timer elapses, remove the entry entirely
+            delete this.allCorrections[uriString]?.[id];
 
             // If a visible text editor exists for this document, then update it to remove the blue
             //      underline visually
@@ -203,6 +201,7 @@ export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclu
                     break;
                 }
             }
+            this.pushToServer();
         }, UNDERLINE_TIMER);
     }
 
@@ -318,34 +317,20 @@ export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclu
             });
         }
         
-        let diagnostics : vscode.Diagnostic[] = [];
-        const decorations = Object.entries(this.allCorrections).map(([ filename, corrections ]) => {
-            if (filename !== vscodeUri.Utils.basename(editor.document.uri)) {
-                return [];
-            }
+        const uriString = editor.document.uri.toString();
+        const decorations = Object.entries(this.allCorrections).map(([ docUri, corrections ]) => {
+            if (docUri !== uriString) return [];
             return Object.entries(corrections).map(([ _, correctionData ]) => {
-                if (!correctionData.active) return [];
-                
-                // Do not do not show the underline if the text of the editor
-                //      at the underline location is no longer the same
-                //      as the corrected text
+                // Do not show the underline if the replacement text no longer matches
                 const currentText = editor.document.getText(correctionData.range);
                 const replacedText = correctionData.corrected;
                 if (stripDiacritics(currentText) !== stripDiacritics(replacedText)) {
                     return [];
                 }
-
-                diagnostics.push(new vscode.Diagnostic(correctionData.range, 
-                    `Corrected ${correctionData.original} to ${correctionData.corrected} in '${correctionData.nodeLabel}'`,
-                    vscode.DiagnosticSeverity.Information
-                ));
-                
                 return correctionData.range;
             }).flat();
         }).flat();
-        const results = editor.setDecorations(Autocorrect.BlueUnderline, decorations);
-        this.diagnosticCollection.set(editor.document.uri, diagnostics);
-        return results;
+        return editor.setDecorations(Autocorrect.BlueUnderline, decorations);
     }
 
     getPackageItems() {
@@ -354,6 +339,33 @@ export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclu
             "wt.autocorrections.corrections": this.corrections,
             "wt.autocorrections.dontCorrect": this.dontCorrect,
         }
+    }
+
+    /** Serialize allCorrections and push them to the language server for diagnostics and code actions. */
+    pushToServer(): void {
+        const corrections: Record<string, Record<string, {
+            kind: CorrectionKind;
+            range: { start: { line: number; character: number }; end: { line: number; character: number } };
+            original: string;
+            corrected: string;
+            nodeLabel: string;
+        }>> = {};
+        for (const [uri, entries] of Object.entries(this.allCorrections)) {
+            corrections[uri] = {};
+            for (const [id, entry] of Object.entries(entries)) {
+                corrections[uri][id] = {
+                    kind: entry.kind,
+                    range: {
+                        start: { line: entry.range.start.line, character: entry.range.start.character },
+                        end:   { line: entry.range.end.line,   character: entry.range.end.character },
+                    },
+                    original: entry.original,
+                    corrected: entry.corrected,
+                    nodeLabel: entry.nodeLabel,
+                };
+            }
+        }
+        sendAutocorrectUpdate(corrections);
     }
 
     registerCommands () {
@@ -382,65 +394,11 @@ export class Autocorrect implements Timed, Packageable<"wt.autocorrections.exclu
         this.exclusions = this.context.workspaceState.get<DiskContextType['wt.autocorrections.exclusions']>('wt.autocorrections.exclusions') || {};
         this.registerCommands();
 
-        this.context.subscriptions.push(vscode.languages.registerCodeActionsProvider(
-            <vscode.DocumentFilter>{
-                language: 'wt'
-            }, this
-        ));
-
-        this.diagnosticCollection = vscode.languages.createDiagnosticCollection("stuff");
         this.specialCharactersSearch = new RegExp(`(${Object.keys(commonReplacements).join("|")})`, 'g');
         this.context.subscriptions.push(Autocorrect.BlueUnderline);
-        this.context.subscriptions.push(this.diagnosticCollection);
     }
 
     getUpdatesAreVisible(): boolean {
         return true;
-    }
-
-    // recieve 
-
-    provideCodeActions(
-        document: vscode.TextDocument, 
-        range: vscode.Range | vscode.Selection, 
-        context: vscode.CodeActionContext, token: vscode.CancellationToken
-    ): vscode.ProviderResult<(vscode.CodeAction | vscode.Command)[]> {
-        return Object.entries(this.allCorrections).map(([ fileName, corrections ]) => {
-            if (vscodeUri.Utils.basename(document.uri) !== fileName) return []
-            return Object.entries(corrections).map(([ _, data ]) => {
-                if (data.kind === 'specialCharacterSwap' || !range.intersection(data.range)) return [];
-
-                const edit = new vscode.WorkspaceEdit();
-                edit.replace(document.uri, data.range, data.original);
-
-                return [
-                    <vscode.CodeAction>{
-                        title: `Corrected from '${data.original}'`,
-                        isPreferred: true,
-                        kind: vscode.CodeActionKind.QuickFix,
-                    },
-                    <vscode.CodeAction>{
-                        title: `Revert this correction`,
-                        command: {
-                            command: "wt.autocorrections.wordExcluded",
-                            arguments: [ data.original, fileName, data.range ]
-                        },
-                        edit: edit,
-                        isPreferred: true,
-                        kind: vscode.CodeActionKind.QuickFix,
-                    },
-                    <vscode.CodeAction>{
-                        title: `Stop correcting ${data.original} -> ${data.corrected}`,
-                        command: {
-                            command: "wt.autocorrections.stopCorrecting",
-                            arguments: [ data.original, fileName, data.range ]
-                        },
-                        edit: edit,
-                        isPreferred: true,
-                        kind: vscode.CodeActionKind.QuickFix,
-                    }
-                ]
-            }).flat();
-        }).flat();
     }
 }

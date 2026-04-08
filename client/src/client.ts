@@ -11,6 +11,7 @@ import * as path from 'path';
 const WT_PERSONAL_DICT_UPDATE = 'wt/personalDictionaryUpdate';
 const WT_WORD_WATCHER_UPDATE  = 'wt/wordWatcherUpdate';
 const WT_CONFIG_UPDATE        = 'wt/configUpdate';
+const WT_AUTOCORRECT_UPDATE   = 'wt/autocorrectUpdate';
 
 let client: LanguageClient;
 
@@ -38,6 +39,17 @@ export function sendPersonalDictionaryUpdate(dict: Record<string, 1>): void {
 /** Push the current word-watcher regex pattern string to the language server. */
 export function sendWordWatcherUpdate(pattern: string | null): void {
     sendClientNotification(WT_WORD_WATCHER_UPDATE, { pattern });
+}
+
+/** Push all active autocorrect corrections to the server for diagnostics and code actions. */
+export function sendAutocorrectUpdate(corrections: Record<string, Record<string, {
+    kind: 'correction' | 'specialCharacterSwap';
+    range: { start: { line: number; character: number }; end: { line: number; character: number } };
+    original: string;
+    corrected: string;
+    nodeLabel: string;
+}>>): void {
+    sendClientNotification(WT_AUTOCORRECT_UPDATE, { corrections });
 }
 
 /**

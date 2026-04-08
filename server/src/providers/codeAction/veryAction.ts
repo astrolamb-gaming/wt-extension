@@ -1,3 +1,20 @@
+/**
+ * veryAction.ts
+ *
+ * Server-side code action provider for the "very <word>" writing-style check.
+ * Powered by losethevery.com, which suggests stronger replacements for phrases
+ * like "very happy" → "ecstatic".
+ *
+ * Flow:
+ *   1. `findVerySpans(text)` scans the full document for "very <word>" patterns.
+ *   2. If the cursor range overlaps a span, `queryVery(word)` fetches the site.
+ *   3. The response HTML is parsed with jsdom (with a regex fallback if jsdom
+ *      is unavailable), yielding a list of synonym suggestions.
+ *   4. Each suggestion is offered as a replacement QuickFix action.
+ *
+ * Results are memoised per word for the lifetime of the server process.
+ * `null` in the memo means the query failed; an array means it succeeded.
+ */
 import { CodeAction, CodeActionKind, Range } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { getHoveredWord } from '../../util/hoveredWord';
@@ -6,8 +23,13 @@ import { capitalize, stripDiacritics } from '../../util/textUtils';
 type VerySpan = { startOff: number; endOff: number; veryText: string };
 
 /**
- * Scans raw document text for all "very <word>" spans.
+ * Scans raw document text for all "very <word>" spans using the same
+ * stop-character set used elsewhere for word-boundary detection.
  * Mirrors VeryIntellisense.update() but operates purely on a string.
+ *
+ * A "very <word>" span is counted only when:
+ *   – The token is literally "very" (case-insensitive)
+ *   – It is immediately followed by a single space and then a letter
  */
 function findVerySpans(text: string): VerySpan[] {
     const stops = /[\.\?,\s\;'":\(\)\{\}\[\]\/\\\-!\*_]/g;
@@ -41,13 +63,30 @@ function findVerySpans(text: string): VerySpan[] {
     return spans;
 }
 
+/** Returns true when the character ranges [aStart,aEnd) and [bStart,bEnd) share any characters. */
 function offsetsOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
     return aStart < bEnd && bStart < aEnd;
 }
 
-// Simple memoisation: null means "query failed", string[] means "succeeded"
+/**
+ * Memo cache for losethevery.com query results.
+ *   `undefined` — not yet queried
+ *   `null`      — query was attempted but failed
+ *   `string[]`  — query succeeded; list of suggested replacements
+ */
 const alreadyObtained: Record<string, string[] | null> = {};
 
+/**
+ * Fetches losethevery.com for the given `word` and extracts the list of
+ * suggested replacement words from the page HTML.
+ *
+ * Parsing strategy:
+ *   1. Use jsdom if available in node_modules (full DOM traversal).
+ *   2. Fall back to a lightweight <a>…</a> regex scan when jsdom is absent.
+ *
+ * Returns `null` on network / parse failure so the caller can show a fallback
+ * "open in browser" action instead.
+ */
 async function queryVery(word: string): Promise<string[] | null> {
     const normalized = stripDiacritics(word);
     const url = `https://www.losethevery.com/another-word/very-${encodeURIComponent(normalized)}`;
@@ -62,13 +101,14 @@ async function queryVery(word: string): Promise<string[] | null> {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { JSDOM } = require('jsdom') as typeof import('jsdom');
             const dom = new JSDOM(html);
+            // The suggestions are anchor tags inside the first <div> inside <main>
             const main      = dom.window.document.querySelector('main');
             const container = main?.querySelector('div');
             const anchors   = container?.querySelectorAll('a');
             if (!anchors || anchors.length === 0) return null;
             return [...anchors].map((a: Element) => a.textContent?.trim().toLocaleLowerCase() ?? '').filter(Boolean);
         } catch {
-            // jsdom not available — regex fallback
+            // jsdom not available — regex fallback: grab all <a> text nodes
             const matches = [...html.matchAll(/<a[^>]*>([^<]+)<\/a>/gi)];
             const words = matches.map(m => m[1].trim().toLocaleLowerCase()).filter(Boolean);
             return words.length > 0 ? words : null;
@@ -78,6 +118,7 @@ async function queryVery(word: string): Promise<string[] | null> {
     }
 }
 
+/** Fallback action shown when losethevery.com cannot be reached. */
 const failureAction = (otherWord: string): CodeAction => ({
     title: 'Unable to query very synonyms: Open in a new browser?',
     isPreferred: true,
@@ -95,25 +136,30 @@ export async function veryCodeActions(doc: TextDocument, range: Range): Promise<
     const actionStartOff = doc.offsetAt(range.start);
     const actionEndOff   = doc.offsetAt(range.end);
 
+    // Find all "very <word>" spans in the document and check whether the
+    // cursor overlaps any of them
     const spans = findVerySpans(text);
     const hit = spans.find(s => offsetsOverlap(s.startOff, s.endOff, actionStartOff, actionEndOff));
     if (!hit) return [];
 
     const [veryWord, otherWord] = hit.veryText.split(' ');
 
-    // Check memo cache
+    // Serve from memo cache if we already attempted this word
     if (alreadyObtained[otherWord] === null) return [failureAction(otherWord)];
 
+    // Query losethevery.com (or use the cached result)
     const synonyms = alreadyObtained[otherWord] ?? (await queryVery(otherWord));
     alreadyObtained[otherWord] = synonyms;
 
     if (!synonyms) return [failureAction(otherWord)];
 
+    // The replacement should cover the entire "very <word>" span
     const veryRange: Range = {
         start: doc.positionAt(hit.startOff),
         end:   doc.positionAt(hit.endOff),
     };
 
+    // Preserve the capitalisation of "very" (e.g. "Very" at start of sentence)
     return synonyms.map(suggest => {
         const suggestedWord = veryWord === 'Very' ? capitalize(suggest) : suggest;
         return {

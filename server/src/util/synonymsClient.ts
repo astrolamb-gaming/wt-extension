@@ -1,3 +1,19 @@
+/**
+ * synonymsClient.ts
+ *
+ * Merriam-Webster Thesaurus API client for the language server.
+ * Provides two public functions:
+ *
+ *   provideSynonyms(word)   — queries the API and returns definitions + synonyms,
+ *                             or an error with spelling suggestions.
+ *   getHoverMarkdown(word)  — wraps provideSynonyms and formats the result as
+ *                             Markdown suitable for an LSP Hover response.
+ *
+ * Both functions maintain in-process caches that persist for the lifetime of the
+ * language server process so the API is not hit more than once per word per
+ * session.  In-flight deduplication prevents duplicate parallel requests for the
+ * same word.
+ */
 import { getPersonalDict, getSynonymsApiKey } from '../state/serverState';
 import { stripDiacritics, capitalize } from './textUtils';
 
@@ -22,9 +38,14 @@ export type SynonymError = {
 
 export type SynonymSearchResult = Synonyms | SynonymError;
 
-// Disable TLS rejection to mirror client-side behaviour
+// Disable TLS certificate rejection to mirror the client-side fetch behaviour
+// (the MW API endpoint uses a self-signed cert in some environments).
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
+/**
+ * Recursively flattens a nested array-of-strings structure returned by the
+ * Merriam-Webster JSON response for `shortdef`, `syns`, and `ants` fields.
+ */
 function parseList(defs: (string | string[])[]): string[] {
     const out: string[] = [];
     for (const d of defs) {
@@ -34,11 +55,19 @@ function parseList(defs: (string | string[])[]): string[] {
     return out;
 }
 
-// Outgoing queries already in flight — avoids duplicate network requests
+/** Outgoing queries already in flight — avoids duplicate parallel network requests. */
 const inflightQueries: Map<string, Promise<SynonymSearchResult>> = new Map();
-// Resolved cache (in-memory, server lifetime)
+/** In-memory result cache; keyed on stripped/lowercased word; lives for server lifetime. */
 const synonymCache: Map<string, SynonymSearchResult> = new Map();
 
+/**
+ * Makes a single HTTP request to the Merriam-Webster Thesaurus API and parses
+ * the JSON response into a typed SynonymSearchResult.
+ *
+ * When the API does not recognise the word it returns an array of strings
+ * (spelling suggestions) instead of an array of entry objects — that case is
+ * detected and mapped to a SynonymError containing the suggestions.
+ */
 async function querySynonymsApi(word: string, apiKey: string): Promise<SynonymSearchResult> {
     const url = `https://dictionaryapi.com/api/v3/references/thesaurus/json/${encodeURIComponent(word)}?key=${encodeURIComponent(apiKey)}`;
     try {
@@ -76,20 +105,31 @@ async function querySynonymsApi(word: string, apiKey: string): Promise<SynonymSe
     }
 }
 
+/**
+ * Returns synonyms and definitions for `word` from the Merriam-Webster
+ * Thesaurus API, using in-process caching and in-flight deduplication.
+ *
+ * The word is normalised (diacritics stripped, lowercased) before lookup so
+ * that "café" and "cafe" resolve to the same cached result.
+ */
 export async function provideSynonyms(word: string): Promise<SynonymSearchResult> {
     const normalized = stripDiacritics(word.toLowerCase());
 
+    // Return immediately if a previous result is cached
     const cached = synonymCache.get(normalized);
     if (cached) return cached;
 
+    // Re-use an in-flight promise for the same word to avoid duplicate requests
     const inflight = inflightQueries.get(normalized);
     if (inflight) return inflight;
 
+    // Guard: cannot query without a configured API key
     const apiKey = getSynonymsApiKey();
     if (!apiKey) {
         return { type: 'error', message: 'No synonyms API key configured. Set `wt.synonyms.apiKey` in settings.' };
     }
 
+    // Fire the request, register it as in-flight, and cache the result on completion
     const promise = querySynonymsApi(normalized, apiKey).then(result => {
         synonymCache.set(normalized, result);
         inflightQueries.delete(normalized);
@@ -99,9 +139,18 @@ export async function provideSynonyms(word: string): Promise<SynonymSearchResult
     return promise;
 }
 
-// Hover markdown cache — keyed on stripped word
+/** In-memory hover-markdown cache; keyed on stripped word; lives for server lifetime. */
 const hoverMarkdownCache: Map<string, string> = new Map();
 
+/**
+ * Builds the Markdown string shown in the hover tooltip for `text`.
+ *
+ * Flow:
+ *   1. Check the in-memory cache (avoids re-formatting already-seen words).
+ *   2. Call provideSynonyms().
+ *   3. On error: return a personal-dictionary notice or the API error message.
+ *   4. On success: format definitions as a Markdown bullet list and cache it.
+ */
 export async function getHoverMarkdown(text: string): Promise<string> {
     const stripped = stripDiacritics(text);
     const cached = hoverMarkdownCache.get(stripped);
