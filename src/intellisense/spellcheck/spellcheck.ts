@@ -99,6 +99,8 @@ export class Spellcheck implements Timed {
                 const strippedText = stripDiacritics(text.toLocaleLowerCase().replaceAll(/[#~]/g, ''));
 
                 if (/\d+/.test(strippedText)) continue;                                                         // do not make red if the word is made up entirely of numbers
+                // do not make red if this token is a contraction suffix (e.g. "ve" in "I've", "ll" in "we'll")
+                if (/^['''`]/.test(fullText[document.offsetAt(range.start) - 1] ?? '') && /^(ve|d|s|ll|re|m|t)$/i.test(strippedText)) continue;                                                         // do not make red if the word is made up entirely of numbers
                 if (dictionary[strippedText]) continue;                                                         // do not make red if the dictionary contains this word
                 if (this.personalDictionary.search(strippedText)) continue;                                     // do not make red if the personal dictionary contains this word
 

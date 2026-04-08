@@ -89,7 +89,13 @@ export function getHoveredWord(text: string, off: number): HoverPosition | null 
 
     if (goBack || goLeft || !start || !end) return null;
 
+    // If the character immediately before this token is an apostrophe, it is a
+    // contraction suffix (e.g. "ve" in "I've", "ll" in "we'll", "d" in "he'd").
+    // Treat it as a non-word so providers don't flag it as misspelled.
+    const precedingChar = text[start - 1] ?? '';
     const originalText = text.substring(start, end);
+    if (/['''`]/.test(precedingChar) && /^(ve|d|s|ll|re|m|t)$/i.test(originalText)) return null;
+
     const strippedText = stripDiacritics(originalText);
     return { start, end, text: originalText, strippedText };
 }
