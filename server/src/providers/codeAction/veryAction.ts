@@ -17,46 +17,47 @@
  */
 import { CodeAction, CodeActionKind, Range } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { getHoveredWord } from '../../util/hoveredWord';
+import { tokenizeDocument } from '../../semanticTokens/semanticTokens';
 import { capitalize, stripDiacritics } from '../../util/textUtils';
 
 type VerySpan = { startOff: number; endOff: number; veryText: string };
 
 /**
- * Scans raw document text for all "very <word>" spans using the same
- * stop-character set used elsewhere for word-boundary detection.
- * Mirrors VeryIntellisense.update() but operates purely on a string.
+ * Scans the token stream for all "very <word>" spans.
  *
- * A "very <word>" span is counted only when:
- *   – The token is literally "very" (case-insensitive)
- *   – It is immediately followed by a single space and then a letter
+ * A span is only counted when a `word` token whose text is "very" is
+ * immediately followed by a single-character `whitespace` token and then
+ * another `word` token, all on the same line.  Using tokens is consistent
+ * with semantic highlighting and naturally handles contractions.
  */
-function findVerySpans(text: string): VerySpan[] {
-    const stops = /[\.\?,\s\;'":\(\)\{\}\[\]\/\\\-!\*_]/g;
+function findVerySpans(doc: TextDocument): VerySpan[] {
+    const tokens = tokenizeDocument(doc);
+    const text   = doc.getText();
     const spans: VerySpan[] = [];
 
-    let startOff: number;
-    let endOff = -1;
-    let match: RegExpExecArray | null;
+    for (let i = 0; i < tokens.length - 2; i++) {
+        const veryTok = tokens[i];
+        if (veryTok.type !== 'word') continue;
 
-    while ((match = stops.exec(text)) !== null) {
-        startOff = endOff + 1;
-        endOff = match.index;
+        const veryStart = doc.offsetAt({ line: veryTok.line, character: veryTok.startChar });
+        const veryWord  = text.substring(veryStart, veryStart + veryTok.length);
+        if (veryWord.toLowerCase() !== 'very') continue;
 
-        if (Math.abs(startOff - endOff) <= 1) continue;
+        // Must be followed immediately by a single space on the same line
+        const wsTok = tokens[i + 1];
+        if (wsTok.type !== 'whitespace' || wsTok.line !== veryTok.line || wsTok.length !== 1) continue;
 
-        const word = text.substring(startOff, endOff).toLocaleLowerCase();
-        if (word !== 'very') continue;
-        if (text[endOff] !== ' ') continue;
-        if (!text[endOff + 1]?.match(/[A-Za-z]/)) continue;
+        // Then a word token on the same line
+        const nextTok = tokens[i + 2];
+        if (nextTok.type !== 'word' || nextTok.line !== veryTok.line) continue;
 
-        const otherWordResult = getHoveredWord(text, endOff + 1);
-        if (!otherWordResult) continue;
+        const nextStart = doc.offsetAt({ line: nextTok.line, character: nextTok.startChar });
+        const nextEnd   = nextStart + nextTok.length;
 
         spans.push({
-            startOff,
-            endOff:   otherWordResult.end,
-            veryText: text.substring(startOff, otherWordResult.end),
+            startOff: veryStart,
+            endOff:   nextEnd,
+            veryText: text.substring(veryStart, nextEnd),
         });
     }
 
@@ -131,14 +132,12 @@ const failureAction = (otherWord: string): CodeAction => ({
 });
 
 export async function veryCodeActions(doc: TextDocument, range: Range): Promise<CodeAction[]> {
-    const text = doc.getText();
-
     const actionStartOff = doc.offsetAt(range.start);
     const actionEndOff   = doc.offsetAt(range.end);
 
     // Find all "very <word>" spans in the document and check whether the
     // cursor overlaps any of them
-    const spans = findVerySpans(text);
+    const spans = findVerySpans(doc);
     const hit = spans.find(s => offsetsOverlap(s.startOff, s.endOff, actionStartOff, actionEndOff));
     if (!hit) return [];
 

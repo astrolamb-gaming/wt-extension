@@ -90,6 +90,7 @@ export function getHoveredWord (document: vscode.TextDocument, position: vscode.
     // Return null so providers don't flag it as misspelled.
     const precedingChar = text[start - 1] ?? '';
     const originalText = text.substring(start, end);
+    if (!originalText) return null;
     if (/['''`]/.test(precedingChar) && /^(ve|d|s|ll|re|m|t)$/i.test(originalText)) return null;
 
     const strippedText = stripDiacritics(originalText);

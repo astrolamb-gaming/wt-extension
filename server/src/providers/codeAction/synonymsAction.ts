@@ -49,11 +49,10 @@ function defaultActions(text: string, capitalizedText: string): CodeAction[] {
 }
 
 export async function synonymsCodeActions(doc: TextDocument, range: Range): Promise<CodeAction[]> {
-    const text = doc.getText();
     const offset = doc.offsetAt(range.start);
 
     // Identify the word at the cursor position
-    const hoverPos = getHoveredWord(text, offset);
+    const hoverPos = getHoveredWord(doc, offset);
     if (!hoverPos) return [];
 
     const hoverRange: Range = {

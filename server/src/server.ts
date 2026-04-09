@@ -133,9 +133,8 @@ connection.onCompletion(async (params: TextDocumentPositionParams): Promise<Comp
 	const doc = documents.get(params.textDocument.uri);
 	if (!doc) return undefined;
 
-	const text = doc.getText();
 	const offset = doc.offsetAt(params.position);
-	const hoverPos = getHoveredWord(text, offset);
+	const hoverPos = getHoveredWord(doc, offset);
 	if (!hoverPos || hoverPos.strippedText.length === 0) return [];
 
 	const hoverRange = { start: doc.positionAt(hoverPos.start), end: doc.positionAt(hoverPos.end) };
@@ -238,9 +237,8 @@ connection.onHover(async (params: TextDocumentPositionParams): Promise<Hover | u
 	const doc = documents.get(params.textDocument.uri);
 	if (!doc) return undefined;
 
-	const text   = doc.getText();
 	const offset = doc.offsetAt(params.position);
-	const hoverPos = getHoveredWord(text, offset);
+	const hoverPos = getHoveredWord(doc, offset);
 	if (!hoverPos) return undefined;
 
 	const markdown = await getHoverMarkdown(hoverPos.strippedText);

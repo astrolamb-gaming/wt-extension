@@ -15,11 +15,10 @@ import { getHoveredWord } from '../../util/hoveredWord';
 import { getWordWatcherPattern } from '../../state/serverState';
 
 export function wordWatcherCodeActions(doc: TextDocument, range: Range): CodeAction[] {
-    const text = doc.getText();
     const offset = doc.offsetAt(range.start);
 
     // Identify the word at the cursor position
-    const hoverPos = getHoveredWord(text, offset);
+    const hoverPos = getHoveredWord(doc, offset);
     if (!hoverPos) return [];
 
     // If there is no pattern, the user has no watched words configured

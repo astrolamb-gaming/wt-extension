@@ -18,7 +18,7 @@ export const TOKEN_MODIFIERS = [
 
 
 
-interface Token {
+export interface Token {
     line: number;
     startChar: number;
     length: number;
@@ -31,7 +31,7 @@ interface Token {
  * Tokenize a document into semantic tokens based on text styling markers.
  * Scans for matching pairs of style markers (*, ^, _, ~) and creates tokens.
  */
-function tokenizeDocument(document: TextDocument): Token[] {
+export function tokenizeDocument(document: TextDocument): Token[] {
     const tokens: Token[] = [];
     const text = document.getText();
 
