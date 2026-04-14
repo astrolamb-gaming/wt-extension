@@ -1,20 +1,15 @@
 /**
  * synonymsClient.ts
  *
- * Merriam-Webster Thesaurus API client for the language server.
- * Provides two public functions:
+ * Synonyms lookup client used by the language server. Supports both providers
+ * used by the pre-LSP implementation:
+ *   - Merriam-Webster Dictionary API (`synonymsApi`)
+ *   - Word Hippo (`wh`)
  *
- *   provideSynonyms(word)   — queries the API and returns definitions + synonyms,
- *                             or an error with spelling suggestions.
- *   getHoverMarkdown(word)  — wraps provideSynonyms and formats the result as
- *                             Markdown suitable for an LSP Hover response.
- *
- * Both functions maintain in-process caches that persist for the lifetime of the
- * language server process so the API is not hit more than once per word per
- * session.  In-flight deduplication prevents duplicate parallel requests for the
- * same word.
+ * The active provider is pushed from the extension host via WT_CONFIG_UPDATE.
+ * Results are cached per provider+word and in-flight requests are deduplicated.
  */
-import { getPersonalDict, getSynonymsApiKey } from '../state/serverState';
+import { getPersonalDict, getSynonymsApiKey, getSynonymsProvider } from '../state/serverState';
 import { stripDiacritics, capitalize } from './textUtils';
 
 export type Definition = {
@@ -38,14 +33,9 @@ export type SynonymError = {
 
 export type SynonymSearchResult = Synonyms | SynonymError;
 
-// Disable TLS certificate rejection to mirror the client-side fetch behaviour
-// (the MW API endpoint uses a self-signed cert in some environments).
+// Disable TLS certificate rejection to mirror the old client behaviour.
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-/**
- * Recursively flattens a nested array-of-strings structure returned by the
- * Merriam-Webster JSON response for `shortdef`, `syns`, and `ants` fields.
- */
 function parseList(defs: (string | string[])[]): string[] {
     const out: string[] = [];
     for (const d of defs) {
@@ -55,19 +45,13 @@ function parseList(defs: (string | string[])[]): string[] {
     return out;
 }
 
-/** Outgoing queries already in flight — avoids duplicate parallel network requests. */
+function keyFor(provider: 'wh' | 'synonymsApi', word: string): string {
+    return `${provider}:${word}`;
+}
+
 const inflightQueries: Map<string, Promise<SynonymSearchResult>> = new Map();
-/** In-memory result cache; keyed on stripped/lowercased word; lives for server lifetime. */
 const synonymCache: Map<string, SynonymSearchResult> = new Map();
 
-/**
- * Makes a single HTTP request to the Merriam-Webster Thesaurus API and parses
- * the JSON response into a typed SynonymSearchResult.
- *
- * When the API does not recognise the word it returns an array of strings
- * (spelling suggestions) instead of an array of entry objects — that case is
- * detected and mapped to a SynonymError containing the suggestions.
- */
 async function querySynonymsApi(word: string, apiKey: string): Promise<SynonymSearchResult> {
     const url = `https://dictionaryapi.com/api/v3/references/thesaurus/json/${encodeURIComponent(word)}?key=${encodeURIComponent(apiKey)}`;
     try {
@@ -75,7 +59,16 @@ async function querySynonymsApi(word: string, apiKey: string): Promise<SynonymSe
         if (!resp.ok) {
             return { type: 'error', message: 'Could not connect to dictionary API. Please check your internet connection.' };
         }
-        const json: unknown = await resp.json();
+
+        // Some API failures return plain text (e.g. "Word is required.") with status 200.
+        // Parse defensively to avoid throwing a JSON syntax error into user-facing hover text.
+        const body = await resp.text();
+        let json: unknown;
+        try {
+            json = JSON.parse(body);
+        } catch {
+            return { type: 'error', message: `Dictionary API request failed: ${body}` };
+        }
 
         if (!Array.isArray(json) || json.length === 0 || typeof json[0] === 'string') {
             const arr = (json as string[]).slice(0, 10);
@@ -94,7 +87,6 @@ async function querySynonymsApi(word: string, apiKey: string): Promise<SynonymSe
             antonyms:    parseList(d['meta']['ants']),
         }));
 
-        // Deduplicate by first definition string (mirrors client)
         const defMap: Record<string, number> = {};
         definitions.forEach((def, i) => { defMap[def.definitions[0]] = i; });
         const dedupedDefs = Object.values(defMap).map(i => definitions[i]);
@@ -105,55 +97,130 @@ async function querySynonymsApi(word: string, apiKey: string): Promise<SynonymSe
     }
 }
 
-/**
- * Returns synonyms and definitions for `word` from the Merriam-Webster
- * Thesaurus API, using in-process caching and in-flight deduplication.
- *
- * The word is normalised (diacritics stripped, lowercased) before lookup so
- * that "café" and "cafe" resolve to the same cached result.
- */
-export async function provideSynonyms(word: string): Promise<SynonymSearchResult> {
-    const normalized = stripDiacritics(word.toLowerCase());
+async function queryWordHippo(word: string): Promise<SynonymSearchResult> {
+    const normalized = word.toLowerCase().trim().replace(/\s+/g, '_');
+    const url = `https://www.wordhippo.com/what-is/another-word-for/${encodeURIComponent(normalized)}.html`;
 
-    // Return immediately if a previous result is cached
-    const cached = synonymCache.get(normalized);
-    if (cached) return cached;
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            console.log(url);
+            return { type: 'error', message: `Could not connect to Word Hippo. Please check your internet connection.\n${url}` };
+        }
 
-    // Re-use an in-flight promise for the same word to avoid duplicate requests
-    const inflight = inflightQueries.get(normalized);
-    if (inflight) return inflight;
+        const html = await resp.text();
+        if (html.includes('/what-is/recaptcha.bot')) {
+            return { type: 'error', message: 'Word Hippo rejected the request (captcha). Try again shortly.' };
+        }
 
-    // Guard: cannot query without a configured API key
-    const apiKey = getSynonymsApiKey();
-    if (!apiKey) {
-        return { type: 'error', message: 'No synonyms API key configured. Set `wt.synonyms.apiKey` in settings.' };
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { JSDOM } = require('jsdom') as typeof import('jsdom');
+            const parser = new JSDOM(html);
+            const doc = parser.window.document;
+            const partsOfSpeech = doc.querySelectorAll('.wordtype');
+            const descriptions = doc.querySelectorAll('.tabdesc');
+            const allRelated = doc.querySelectorAll('.relatedwords');
+
+            const definitions: Definition[] = [];
+            for (let i = 0; i < allRelated.length; i++) {
+                let part = partsOfSpeech[i]?.textContent?.replaceAll(/[^\w]/g, '')?.toLowerCase() ?? '';
+                if (part === 'nearbywords') part = 'Nearby Words';
+
+                const description = descriptions[i]?.textContent?.trim() ?? '';
+                const related = allRelated[i];
+                const phrases = [
+                    ...related.querySelectorAll('.wb'),
+                    ...related.querySelectorAll('.wordblock'),
+                ];
+
+                const synonyms = phrases
+                    .map(p => (p.textContent ?? '').trim())
+                    .map(txt => txt.endsWith('US') ? txt.replace('US', '').trim() : txt)
+                    .filter(txt => txt.length > 0 && !txt.endsWith('UK'));
+
+                definitions.push({
+                    part,
+                    definitions: [description],
+                    synonyms,
+                    antonyms: [],
+                });
+            }
+
+            if (definitions.length === 0) {
+                return { type: 'error', message: 'Word Hippo was unable to find synonyms for this word.' };
+            }
+
+            if (definitions.length === 1 && definitions[0].part === 'Nearby Words') {
+                return {
+                    type: 'error',
+                    message: 'Word Hippo was unable to find exact synonyms for this word.',
+                    suggestions: definitions[0].synonyms,
+                };
+            }
+
+            return {
+                type: 'success',
+                word: normalized,
+                definitions,
+            };
+        } catch {
+            // Fallback if jsdom is unavailable: collect anchor labels only.
+            const anchorMatches = [...html.matchAll(/<a[^>]*>([^<]+)<\/a>/gi)];
+            const words = anchorMatches.map(m => m[1].trim()).filter(Boolean).slice(0, 25);
+            if (words.length === 0) {
+                return { type: 'error', message: 'Word Hippo parsing failed for this word.' };
+            }
+            return {
+                type: 'success',
+                word: normalized,
+                definitions: [{ part: 'Related Words', definitions: ['Related words from Word Hippo'], synonyms: words, antonyms: [] }],
+            };
+        }
+    } catch (err) {
+        return { type: 'error', message: `Word Hippo request failed: ${err}` };
     }
-
-    // Fire the request, register it as in-flight, and cache the result on completion
-    const promise = querySynonymsApi(normalized, apiKey).then(result => {
-        synonymCache.set(normalized, result);
-        inflightQueries.delete(normalized);
-        return result;
-    });
-    inflightQueries.set(normalized, promise);
-    return promise;
 }
 
-/** In-memory hover-markdown cache; keyed on stripped word; lives for server lifetime. */
+export async function provideSynonyms(word: string): Promise<SynonymSearchResult> {
+    const provider = getSynonymsProvider();
+    const normalized = stripDiacritics(word.toLowerCase());
+    const cacheKey = keyFor(provider, normalized);
+
+    const cached = synonymCache.get(cacheKey);
+    if (cached) return cached;
+
+    const inflight = inflightQueries.get(cacheKey);
+    if (inflight) return inflight;
+
+    let promise: Promise<SynonymSearchResult>;
+    if (provider === 'wh') {
+        promise = queryWordHippo(normalized);
+    } else {
+        const apiKey = getSynonymsApiKey();
+        if (!apiKey) {
+            return { type: 'error', message: 'No synonyms API key configured. Set `wt.synonyms.apiKey` in settings.' };
+        }
+        promise = querySynonymsApi(normalized, apiKey);
+    }
+
+    const tracked = promise.then(result => {
+        synonymCache.set(cacheKey, result);
+        inflightQueries.delete(cacheKey);
+        return result;
+    });
+
+    inflightQueries.set(cacheKey, tracked);
+    return tracked;
+}
+
 const hoverMarkdownCache: Map<string, string> = new Map();
 
-/**
- * Builds the Markdown string shown in the hover tooltip for `text`.
- *
- * Flow:
- *   1. Check the in-memory cache (avoids re-formatting already-seen words).
- *   2. Call provideSynonyms().
- *   3. On error: return a personal-dictionary notice or the API error message.
- *   4. On success: format definitions as a Markdown bullet list and cache it.
- */
 export async function getHoverMarkdown(text: string): Promise<string> {
+    const provider = getSynonymsProvider();
     const stripped = stripDiacritics(text);
-    const cached = hoverMarkdownCache.get(stripped);
+    const hoverCacheKey = keyFor(provider, stripped);
+    const cached = hoverMarkdownCache.get(hoverCacheKey);
     if (cached) return cached;
 
     const response = await provideSynonyms(stripped);
@@ -173,6 +240,6 @@ export async function getHoverMarkdown(text: string): Promise<string> {
     });
     const fullString = `${header}\n\n\n${definitions.join('\n\n')}`;
 
-    hoverMarkdownCache.set(stripped, fullString);
+    hoverMarkdownCache.set(hoverCacheKey, fullString);
     return fullString;
 }

@@ -37,8 +37,12 @@ export type PersonalDictUpdateParams = { dict: Record<string, 1> };
 /** Compiled regex pattern string for all watched words, or `null` when empty. */
 export type WordWatcherUpdateParams  = { pattern: string | null };
 
-/** Merriam-Webster Thesaurus API key and optional cache-location override. */
-export type ConfigUpdateParams       = { apiKey: string | null; cacheLocation: string | null };
+/** Active synonyms provider and optional API/cache settings from the client. */
+export type ConfigUpdateParams       = {
+    apiKey: string | null;
+    cacheLocation: string | null;
+    provider: 'wh' | 'synonymsApi';
+};
 
 /**
  * A single autocorrect underline entry — one word that was changed (or swapped

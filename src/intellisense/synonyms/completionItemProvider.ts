@@ -9,6 +9,7 @@ import { ExtensionGlobals } from '../../extension';
 import { TextMatchForNote } from '../../notebook/timedViewUpdate';
 import { __ } from './../../miscTools/help';
 import { nextTick } from 'process';
+import { sendSynonymsConfigUpdate } from '../../../client/out/client';
 
 const NUMBER_COMPLETES = 20;
 
@@ -41,9 +42,13 @@ export class CompletionItemProvider implements vscode.CompletionItemProvider<vsc
         private context: vscode.ExtensionContext,
         private workspace: Workspace,
         useWordHippo: boolean,
-    ) { 
-        this.registerCommands();
+    ) {
         this.isWordHippo = useWordHippo;
+        this.registerCommands();
+
+        // Ensure the language server starts with the same provider mode the
+        // extension host currently uses.
+        sendSynonymsConfigUpdate(this.isWordHippo ? 'wh' : 'synonymsApi');
     }
 
     private debounce: NodeJS.Timeout | null = null;
@@ -431,6 +436,9 @@ export class CompletionItemProvider implements vscode.CompletionItemProvider<vsc
             // Reset word hippo status, activation state, and cache
             this.isWordHippo = !this.isWordHippo;
             this.activationState = undefined;
+
+            // Keep the language server provider in sync with the legacy mode toggle.
+            sendSynonymsConfigUpdate(this.isWordHippo ? 'wh' : 'synonymsApi');
 
             const using = this.isWordHippo
                 ? 'Word Hippo'

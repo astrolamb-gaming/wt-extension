@@ -13,6 +13,8 @@ const WT_WORD_WATCHER_UPDATE  = 'wt/wordWatcherUpdate';
 const WT_CONFIG_UPDATE        = 'wt/configUpdate';
 const WT_AUTOCORRECT_UPDATE   = 'wt/autocorrectUpdate';
 
+type SynonymProviderType = 'wh' | 'synonymsApi';
+
 let client: LanguageClient;
 
 /** Notifications sent before the server is ready are queued here and flushed on ready. */
@@ -50,6 +52,31 @@ export function sendAutocorrectUpdate(corrections: Record<string, Record<string,
     nodeLabel: string;
 }>>): void {
     sendClientNotification(WT_AUTOCORRECT_UPDATE, { corrections });
+}
+
+async function getCurrentSynonymsProvider(): Promise<SynonymProviderType> {
+    try {
+        const provider = await vscode.commands.executeCommand('wt.intellisense.synonyms.getCurrentProvider');
+        if (provider === 'wh' || provider === 'synonymsApi') {
+            return provider;
+        }
+    } catch {
+        // Command may not be registered yet during early activation.
+    }
+    return 'synonymsApi';
+}
+
+/** Push current synonyms provider + API settings to the language server. */
+export function sendSynonymsConfigUpdate(provider?: SynonymProviderType): void {
+    void (async () => {
+        const config = vscode.workspace.getConfiguration();
+        const activeProvider = provider ?? (await getCurrentSynonymsProvider());
+        sendClientNotification(WT_CONFIG_UPDATE, {
+            apiKey:        config.get<string>('wt.synonyms.apiKey')        ?? null,
+            cacheLocation: config.get<string>('wt.synonyms.cacheLocation') ?? null,
+            provider:      activeProvider,
+        });
+    })();
 }
 
 /**
@@ -122,23 +149,15 @@ export function activateLanguageServerClient(context: vscode.ExtensionContext, c
         }
         pendingNotifications.length = 0;
 
-        // Push current synonyms config (API key + cache location)
-        const config = vscode.workspace.getConfiguration();
-        client.sendNotification(WT_CONFIG_UPDATE, {
-            apiKey:        config.get<string>('wt.synonyms.apiKey')        ?? null,
-            cacheLocation: config.get<string>('wt.synonyms.cacheLocation') ?? null,
-        });
+        // Push current synonyms config (provider + API key + cache location)
+        sendSynonymsConfigUpdate();
     });
 
     // Re-push config whenever the user changes relevant settings
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
             if (!e.affectsConfiguration('wt.synonyms')) return;
-            const config = vscode.workspace.getConfiguration();
-            sendClientNotification(WT_CONFIG_UPDATE, {
-                apiKey:        config.get<string>('wt.synonyms.apiKey')        ?? null,
-                cacheLocation: config.get<string>('wt.synonyms.cacheLocation') ?? null,
-            });
+            sendSynonymsConfigUpdate();
         })
     );
 }

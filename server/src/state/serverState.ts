@@ -38,6 +38,9 @@ let wordWatcherPattern: string | null = null;
 /** Merriam-Webster Thesaurus API key, passed through from VS Code settings. */
 let synonymsApiKey: string | null = null;
 
+/** Active synonyms provider selected in the extension host. */
+let synonymsProvider: 'wh' | 'synonymsApi' = 'synonymsApi';
+
 /**
  * Active autocorrect underlines keyed by document URI, then by a random entry
  * id.  Entries expire after UNDERLINE_TIMER ms on the client side.
@@ -49,6 +52,7 @@ let autocorrectCorrections: Record<string, Record<string, AutocorrectEntry>> = {
 export function getPersonalDict(): Record<string, 1> { return personalDict; }
 export function getWordWatcherPattern(): string | null { return wordWatcherPattern; }
 export function getSynonymsApiKey(): string | null { return synonymsApiKey; }
+export function getSynonymsProvider(): 'wh' | 'synonymsApi' { return synonymsProvider; }
 export function getAutocorrectCorrections(): Record<string, Record<string, AutocorrectEntry>> { return autocorrectCorrections; }
 
 // ── Notification handlers ────────────────────────────────────────────────────
@@ -69,9 +73,11 @@ export function registerStateHandlers(connection: Connection): void {
         wordWatcherPattern = params.pattern;
     });
 
-    // Store the API key (and ignore cacheLocation, which is not used server-side).
+    // Store active synonyms provider and API key
+    // (cacheLocation is still ignored server-side).
     connection.onNotification(WT_CONFIG_UPDATE, (params: ConfigUpdateParams) => {
         synonymsApiKey = params.apiKey;
+        synonymsProvider = params.provider;
     });
 
     connection.onNotification(WT_AUTOCORRECT_UPDATE, (params: AutocorrectUpdatePayload) => {
